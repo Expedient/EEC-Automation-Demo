@@ -1,0 +1,132 @@
+---
+
+- name: deploy servers
+  hosts: localhost
+
+  gather_facts: no
+  vars:
+    target_environment: aws
+
+  tasks:
+  - import_tasks: aws_deploy.yml
+    when: target_environment == "aws"
+  - import_tasks: eec_deploy.yml
+    when: target_environment == "eec"
+
+  - name: inspect variables
+    debug:
+      var: tf_results
+
+- name: set database facts
+  hosts: wordpress-db
+  gather_facts: false
+  tasks:
+  - name: set facts
+    set_fact:
+      ansible_host: "{{ hostvars['localhost'].tf_results.outputs.wordpress_db_address.value }}"
+      cacheable: yes
+
+- name: set app facts
+  hosts: wordpress-app
+  gather_facts: false
+  tasks:
+  - name: set facts
+    set_fact:
+      ansible_host: "{{ hostvars['localhost'].tf_results.outputs.wordpress_app_address.value }}"
+      ext_url: "wordpress.domain.com"
+      db_address: "{{ hostvars['localhost'].tf_results.outputs.wordpress_db_private_address.value }}"
+      cacheable: yes
+
+
+- name: wait for provisioning to complete
+  hosts: all
+  gather_facts: false
+  tasks:
+  - name: wait for server provisioning to complete
+    wait_for_connection:
+      timeout: 90
+      delay: 10
+
+- name: apt update
+  hosts: all
+  become: yes
+  tasks:
+  - name: run apt update  
+    apt:
+      update_cache: yes
+    
+- name: configure database
+  hosts: wordpress-db
+  become: true
+  gather_facts: true
+  vars:
+    mysql_databases:
+    - name: wordpress
+    mysql_users:
+    - name: wordpress
+      host: '%'
+      password: wordpress
+      priv: '*.*:ALL'
+      state: present
+  roles:
+  - role: geerlingguy.mysql
+    become: yes
+
+- name: install app server packages
+  hosts: wordpress-app
+  gather_facts: true
+  become: yes
+  tasks:
+  - name: install php
+    apt:
+      update_cache: yes
+      name:
+      - php
+      - php7.0-mysql
+      - libapache2-mod-php
+      - mysql-client
+      state: present
+
+- name: install apache
+  hosts: wordpress-app
+  gather_facts: true
+  become: true
+  vars:
+    apache_mods_enabled:
+    - rewrite.load
+    - ssl.load
+    apache_listen_port: 80
+    apache_vhosts:
+    - servername: "{{ ansible_facts['ext_url'] }}"
+      serveralias: "*"
+      documentroot: "/var/www"
+  roles:
+  - role: geerlingguy.apache
+
+- name: configure wordpress
+  hosts: wordpress-app
+  become: true
+  gather_facts: true
+  vars:
+    wordpress_installs:
+    - name: wordpress
+      dbname: wordpress
+      dbuser: wordpress
+      dbpass: wordpress
+      dbhost: "{{ ansible_facts['db_address'] }}"
+      path: /var/www
+      url: "{{ ansible_facts['ext_url'] }}"
+      title: example-app
+      admin_name: admin
+      admin_email: admin@domain.com
+      admin_password: wordpress
+      themes:
+        - name: twentytwelve
+          activate: true
+        - name: twentythirteen
+      plugins: []
+      users: {}
+      options: []
+      queries: []
+  roles:
+  - role: oefenweb.wordpress

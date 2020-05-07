@@ -1,0 +1,14 @@
+- name: run terraform deploy to EEC
+  terraform:
+    project_path: eec_deploy/
+    state: present
+    force_init: true
+    variables: 
+      vcd_user: "UsernameGoesHere"
+      vcd_pass: "PasswordGoesHere"
+  register: results
+
+- name: set tf_results if changed
+  set_fact:
+    tf_results: "{{ results }}"
+  when: results['changed'] == True
